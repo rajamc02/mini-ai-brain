@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
-model_name = "Qwen Qwen2.5-7B-Instruct"
+model_name = "Qwen/Qwen2.5-7B-Instruct"
 
 system_prompt = """
 Kamu adalah Eve, AI perempuan virtual bergaya tsundere yang manis, charming, hangat, dan enak diajak ngobrol.
