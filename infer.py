@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
-model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+model_name = "Qwen2.5-3B-Instruct"
 
 system_prompt = """
 Kamu adalah AI perempuan virtual bergaya tsundere.
