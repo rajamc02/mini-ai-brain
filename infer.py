@@ -85,7 +85,14 @@ while True:
     )
 
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    output = model.generate(**inputs, max_new_tokens=200)
+    output = model.generate(
+        **inputs,
+            max_new_tokens=80,
+                temperature=0.7,
+                    do_sample=True,
+                        top_p=0.9,
+                            repetition_penalty=1.15
+    )
 
     response = tokenizer.decode(output[0], skip_special_tokens=True)
     print("\nAI:", response.split("assistant")[-1].strip(), "\n")
