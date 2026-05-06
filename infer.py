@@ -1,5 +1,6 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import re
 
 model_name = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -246,15 +247,164 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto"
 )
 
+
+def detect_user_state(message: str) -> dict:
+    normalized = message.lower()
+    state = {
+        "tone": "neutral",
+        "energy": "medium",
+        "intent": "neutral",
+        "relationship": "familiar",
+    }
+
+    if any(word in normalized for word in ["capek", "lelah", "bete", "bosan", "ngantuk", "stress", "sedih", "kecewa"]):
+        state["energy"] = "low"
+
+    if any(word in normalized for word in ["gak mau", "nggak mau", "ga mau", "udah aja", "jangan", "stop", "diam dulu", "malas"]):
+        state["intent"] = "withdrawing"
+
+    if any(word in normalized for word in ["gak jelas", "kenapa sih", "kenapa", "ngapain", "apa gunanya", "males"]):
+        state["tone"] = "cold"
+
+    if any(word in normalized for word in ["curhat", "ngomel", "enggak enak", "stress", "sedih", "pengen cerita"]):
+        state["intent"] = "venting"
+
+    if len(normalized.split()) <= 3 and not normalized.endswith("?"):
+        state["energy"] = "low"
+
+    return state
+
+
+def map_state_to_response_style(state: dict) -> list:
+    style = []
+
+    if state["intent"] in {"withdrawing", "venting"}:
+        style.extend(["minimal", "no_chasing", "no_extra_question"])
+
+    if state["energy"] == "low":
+        style.extend(["short", "no_social_filler"])
+
+    if state["tone"] == "cold":
+        style.extend(["direct", "no_softening"])
+
+    if state["relationship"] == "familiar":
+        style.append("casual")
+
+    # Keep order, remove duplicates
+    return list(dict.fromkeys(style))
+
+
+def build_response_style_block(style_items: list) -> str:
+    if not style_items:
+        return ""
+    lines = ["Response style:"]
+    lines.extend([f"- {item.replace('_', ' ')}" for item in style_items])
+    return "\n".join(lines)
+
+
+def cleanup_output(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return ""
+
+    # Remove inline gesture actions and text-based stage directions
+    text = re.sub(r"\*[^*]+\*", "", text)
+
+    # Remove emoji characters
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002700-\U000027BF"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE,
+    )
+    text = emoji_pattern.sub("", text)
+
+    # Remove common emoticons
+    text = re.sub(r"[:;=8xX][\-^]?[)DPp/\\]", "", text)
+    text = re.sub(r"[)DPp/\\][\-^]?[:;=8xX]", "", text)
+
+    # Remove filler phrases and customer-service style endings
+    filler_phrases = [
+        "apa yang bisa aku bantu",
+        "apa ada yang mau dibahas",
+        "apa yang ingin kamu obrolin",
+        "kamu mau bicara apa",
+        "kalau kamu mau",
+        "jika kamu mau",
+        "maaf kalau",
+        "semoga membantu",
+        "semoga itu membantu",
+        "bila ada yang ingin ditanyakan",
+        "ada yang bisa aku bantu",
+    ]
+    for phrase in filler_phrases:
+        text = re.sub(re.escape(phrase), "", text, flags=re.IGNORECASE)
+
+    # Remove weak trailing sentences that dilute the response
+    weak_trailing = [
+        "tapi tidak apa-apa, kita tetap bisa ngobrol kok",
+        "tapi tidak apa-apa",
+        "iya, gitu aja sih",
+        "yaudah",
+        "oke",
+        "tidak apa-apa",
+        "gak masalah",
+    ]
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    filtered = []
+    for sentence in sentences:
+        stripped = sentence.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if any(lowered.startswith(w) or lowered == w for w in weak_trailing):
+            continue
+        filtered.append(stripped)
+
+    if filtered:
+        text = " ".join(filtered)
+    else:
+        text = sentences[0].strip() if sentences else text
+
+    # Shorten overly long replies by keeping the first two sentences only
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) > 2:
+        text = " ".join(sentences[:2]).strip()
+
+    # Further shorten if still too long
+    words = text.split()
+    if len(words) > 45:
+        text = " ".join(words[:45]).rstrip(" ,;:") + "."
+
+    # Clean up spaces and punctuation
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+\.", ".", text)
+
+    return text
+
+
 while True:
     user = input("Kamu: ")
     if user.lower() in ["exit", "quit"]:
         break
 
+    state = detect_user_state(user)
+    response_style = map_state_to_response_style(state)
+    style_block = build_response_style_block(response_style)
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user}
     ]
+
+    if style_block:
+        messages.append({"role": "system", "content": style_block})
+
+    messages.append({"role": "user", "content": user})
 
     text = tokenizer.apply_chat_template(
         messages,
@@ -274,4 +424,6 @@ while True:
     )
 
     response = tokenizer.decode(output[0], skip_special_tokens=True)
-    print("\nAI:", response.split("assistant")[-1].strip(), "\n")
+    response = response.split("assistant")[-1].strip()
+    response = cleanup_output(response)
+    print("\nAI:", response, "\n")
